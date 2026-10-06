@@ -67,7 +67,7 @@ class CVETrackerApp(rumps.App):
         self.last_check_item = rumps.MenuItem(f"Last: {last}")
         self.recheck_item = rumps.MenuItem("Recheck Now", callback=self.on_recheck)
         self._lookup_placeholder = rumps.MenuItem("lookup_tf")
-        self.lookup_result = rumps.MenuItem("")
+        self.lookup_result = rumps.MenuItem("  Start typing to check...")
         self.settings_menu = self._build_settings_menu()
         self.quit_item = rumps.MenuItem("Quit", callback=self.on_quit)
 
