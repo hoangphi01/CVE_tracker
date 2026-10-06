@@ -18,15 +18,40 @@ _CONFIG_SEARCH = [
 ]
 
 
+_config_path = None
+
+
 def _load_config():
+    global _config_path
     for p in _CONFIG_SEARCH:
         if p and p.exists():
+            _config_path = p
             with open(p) as f:
                 return json.load(f)
     return {}
 
 
 _cfg = _load_config()
+
+
+def get_config_path():
+    """Return the path of the loaded config.json, or the data-dir default."""
+    return _config_path or (DATA_DIR / "config.json")
+
+
+def save_config(cve_ids):
+    """Update cve_ids in config.json, preserving other settings."""
+    path = get_config_path()
+    if path.exists():
+        with open(path) as f:
+            cfg = json.load(f)
+    else:
+        cfg = {}
+        path.parent.mkdir(parents=True, exist_ok=True)
+    cfg["cve_ids"] = list(cve_ids)
+    with open(path, "w") as f:
+        json.dump(cfg, f, indent=2)
+        f.write("\n")
 
 # CVE IDs to track
 CVE_IDS = _cfg.get("cve_ids", ["CVE-2026-78840", "CVE-2026-78841"])

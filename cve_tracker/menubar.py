@@ -12,7 +12,7 @@ from Foundation import NSObject as _NSObject
 
 import rumps
 
-from .config import CVE_IDS, SCHEDULE_HOURS
+from .config import CVE_IDS, SCHEDULE_HOURS, save_config
 from .api import check_cve
 from .state import log, load_state, save_state
 
@@ -54,10 +54,11 @@ class CVETrackerApp(rumps.App):
 
         self.state = load_state()
         self.checking = False
+        self.cve_ids = list(CVE_IDS)
 
         # Build menu
         self.cve_items = {}
-        for cve_id in CVE_IDS:
+        for cve_id in self.cve_ids:
             st = self.state.get(cve_id, "?")
             item = rumps.MenuItem(f"{cve_id}: {st}", callback=self.open_cve)
             self.cve_items[cve_id] = item
@@ -67,6 +68,7 @@ class CVETrackerApp(rumps.App):
         self.recheck_item = rumps.MenuItem("Recheck Now", callback=self.on_recheck)
         self._lookup_placeholder = rumps.MenuItem("lookup_tf")
         self.lookup_result = rumps.MenuItem("")
+        self.settings_menu = self._build_settings_menu()
         self.quit_item = rumps.MenuItem("Quit", callback=self.on_quit)
 
         self.menu = [
@@ -78,11 +80,106 @@ class CVETrackerApp(rumps.App):
             self._lookup_placeholder,
             self.lookup_result,
             None,
+            self.settings_menu,
+            None,
             self.quit_item,
         ]
 
         self._setup_lookup_field()
         self._update_title()
+
+    # ── Settings submenu ──────────────────────────────────
+
+    def _build_settings_menu(self):
+        settings = rumps.MenuItem("Settings")
+        settings.add(rumps.MenuItem("Add CVE...", callback=self.on_add_cve))
+        settings.add(None)  # separator
+        for cve_id in self.cve_ids:
+            settings.add(rumps.MenuItem(f"{cve_id}  ✕", callback=self.on_remove_cve))
+        return settings
+
+    def _rebuild_menu(self):
+        self.menu.clear()
+
+        self.cve_items = {}
+        for cve_id in self.cve_ids:
+            st = self.state.get(cve_id, "?")
+            item = rumps.MenuItem(f"{cve_id}: {st}", callback=self.open_cve)
+            self.cve_items[cve_id] = item
+
+        self.settings_menu = self._build_settings_menu()
+
+        self.menu = [
+            *self.cve_items.values(),
+            None,
+            self.last_check_item,
+            None,
+            self.recheck_item,
+            self._lookup_placeholder,
+            self.lookup_result,
+            None,
+            self.settings_menu,
+            None,
+            self.quit_item,
+        ]
+
+        self._setup_lookup_field()
+        self._update_title()
+
+    @staticmethod
+    def _normalize_cve_id(raw):
+        """Normalize user input into a CVE ID, or return None."""
+        cve_id = raw.strip()
+        if not cve_id:
+            return None
+        if not cve_id.upper().startswith("CVE-"):
+            cve_id = f"CVE-{cve_id}"
+        parts = cve_id.split("-", 1)
+        if len(parts) == 2 and parts[1].isdigit() and len(parts[1]) > 4:
+            parts[1] = parts[1][:4] + "-" + parts[1][4:]
+            cve_id = "-".join(parts)
+        return cve_id.upper()
+
+    def on_add_cve(self, _):
+        w = rumps.Window(
+            title="Add CVE",
+            message="Enter CVE ID (e.g. CVE-2024-1234):",
+            default_text="CVE-",
+            ok="Add",
+            cancel="Cancel",
+            dimensions=(260, 22),
+        )
+        resp = w.run()
+        if resp.clicked:
+            cve_id = self._normalize_cve_id(resp.text)
+            if not cve_id:
+                return
+            if len(self.cve_ids) >= 5:
+                rumps.alert("Limit reached", "Maximum 5 CVEs can be tracked at the same time.")
+                return
+            if cve_id in self.cve_ids:
+                rumps.alert("Duplicate", f"{cve_id} is already tracked.")
+                return
+            self.cve_ids.append(cve_id)
+            save_config(self.cve_ids)
+            self._rebuild_menu()
+            threading.Thread(target=self._do_check, daemon=True).start()
+
+    def on_remove_cve(self, sender):
+        cve_id = sender.title.replace("  ✕", "")
+        if len(self.cve_ids) <= 1:
+            rumps.alert("Cannot remove", "At least one CVE must be tracked.")
+            return
+        resp = rumps.alert(
+            title="Remove CVE",
+            message=f"Stop tracking {cve_id}?",
+            ok="Remove",
+            cancel="Cancel",
+        )
+        if resp == 1:  # OK
+            self.cve_ids.remove(cve_id)
+            save_config(self.cve_ids)
+            self._rebuild_menu()
 
     def open_cve(self, sender):
         for cve_id, item in self.cve_items.items():
@@ -155,7 +252,7 @@ class CVETrackerApp(rumps.App):
 
         any_changed = False
 
-        for cve_id in CVE_IDS:
+        for cve_id in list(self.cve_ids):
             old = self.state.get(cve_id, "UNKNOWN")
             new = check_cve(cve_id)
 
@@ -202,7 +299,7 @@ class CVETrackerApp(rumps.App):
 
     def _update_title(self):
         codes = []
-        for cve_id in CVE_IDS:
+        for cve_id in self.cve_ids:
             s = self.state.get(cve_id, "?")
             if s == "PUBLISHED":
                 codes.append("P")
